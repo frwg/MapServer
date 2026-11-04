@@ -993,6 +993,9 @@ int msDrawLayer(mapObj *map, layerObj *layer, imageObj *image) {
 
     altrenderer->endLayer(image_draw, map, layer);
 
+    if (MS_UNLIKELY(retcode == MS_FAILURE)) {
+      goto altformat_cleanup;
+    }
     retcode = altrenderer->getRasterBufferHandle(image_draw, &rb);
     if (MS_UNLIKELY(retcode == MS_FAILURE)) {
       goto altformat_cleanup;
@@ -1034,6 +1037,9 @@ int msDrawLayer(mapObj *map, layerObj *layer, imageObj *image) {
 
     renderer->endLayer(image_draw, map, layer);
 
+    if (MS_UNLIKELY(retcode == MS_FAILURE)) {
+      goto imagedraw_cleanup;
+    }
     retcode = renderer->getRasterBufferHandle(image_draw, &rb);
     if (MS_UNLIKELY(retcode == MS_FAILURE)) {
       goto imagedraw_cleanup;
