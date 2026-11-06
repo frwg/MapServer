@@ -499,6 +499,9 @@ int msOGCAPIDispatchIndexRequest(mapservObj *mapserv, configObj *config) {
     return MS_FAILURE;
   }
 
+  const char *key = NULL;
+  json links = json::array();
+
   // Collect keys and sort alphabetically (case-insensitive)
   std::vector<std::string> keys;
   const char *key = NULL;

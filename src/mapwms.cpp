@@ -3232,14 +3232,75 @@ msWMSPrintLayerNode(mapObj *map, int nVersion, owsRequestObj *ows_request,
       msFree(encoded);
     }
 
-    if (script_url_encoded && indentLevel == 2 && !node->children.empty() &&
-        node->children[0]->layerIdx >= 0) {
-      layerObj *lp = GET_LAYER(map, node->children[0]->layerIdx);
-      if (lp->group && strlen(lp->group) > 0 &&
-          msIntegerInArray(lp->index, ows_request->enabled_layers,
-                           ows_request->numlayers)) {
-        msWMSPrintGroupStyle(map, nVersion, ows_request, node, lp,
-                             script_url_encoded, indent);
+    /* Beginning of a new group... enclose the group in a layer block */
+    if (j < map->numlayers) {
+      if (!pabLayerProcessed[j]) {
+        msDumpLayer(map, GET_LAYER(map, j), nVersion, script_url_encoded,
+                    indent.c_str(), validated_language, MS_TRUE,
+                    msWMSHasQueryableSubLayers(map, index, level, nestedGroups,
+                                               numNestedGroups));
+        pabLayerProcessed[j] = 1; /* done */
+        groupAdded = true;
+      }
+    } else {
+      msIO_printf("%s    <Layer%s>\n", indent.c_str(),
+                  msWMSHasQueryableSubLayers(map, index, level, nestedGroups,
+                                             numNestedGroups)
+                      ? " queryable=\"1\""
+                      : "");
+      msIO_printf("%s      <Name>%s</Name>\n", indent.c_str(),
+                  nestedGroups[index][level]);
+
+      {
+        const char *value;
+        if ((value = msOWSLookupMetadataWithLanguage(
+                 &(GET_LAYER(map, index)->metadata), "MO", "GROUP_TITLE",
+                 validated_language))) {
+          char *encoded = msEncodeHTMLEntities(value);
+          msIO_printf("%s      <Title>%s</Title>\n", indent.c_str(), encoded);
+          msFree(encoded);
+        } else {
+          msIO_printf("%s      <Title>%s</Title>\n", indent.c_str(),
+                      nestedGroups[index][level]);
+        }
+      }
+      {
+        const char *value;
+        if ((value = msOWSLookupMetadataWithLanguage(
+                 &(GET_LAYER(map, index)->metadata), "MO", "GROUP_ABSTRACT",
+                 validated_language))) {
+          char *encoded = msEncodeHTMLEntities(value);
+          msIO_printf("%s      <Abstract>%s</Abstract>\n", indent.c_str(),
+                      encoded);
+          msFree(encoded);
+        }
+      }
+
+      groupAdded = true;
+    }
+
+    /* Look for one group deeper in the current layer */
+    if (!pabLayerProcessed[index]) {
+      msWMSPrintNestedGroups(map, nVersion, pabLayerProcessed, index, level + 1,
+                             nestedGroups, numNestedGroups, isUsedInNestedGroup,
+                             script_url_encoded, validated_language);
+    }
+
+    /* look for subgroups in other layers. */
+    for (j = index + 1; j < map->numlayers; j++) {
+      if (msWMSIsSubGroup(nestedGroups[index], level, nestedGroups[j],
+                          numNestedGroups[j])) {
+        if (!pabLayerProcessed[j]) {
+          msWMSPrintNestedGroups(map, nVersion, pabLayerProcessed, j, level + 1,
+                                 nestedGroups, numNestedGroups,
+                                 isUsedInNestedGroup, script_url_encoded,
+                                 validated_language);
+        }
+      } else {
+        /* TODO: if we would sort all layers on "WMS_LAYER_GROUP" beforehand */
+        /* we could break out of this loop at this point, which would increase
+         */
+        /* performance.  */
       }
     }
   }
@@ -4225,12 +4286,172 @@ int msTranslateWMS2Mapserv(const char **names, const char **values,
   return MS_SUCCESS;
 }
 
+class msWMSLayerOpacityScope {
+  struct SavedOpacity {
+    layerObj *layer;
+    LayerCompositer *compositer;
+    int opacity;
+  };
+  std::vector<SavedOpacity> saved;
+
+public:
+  msWMSLayerOpacityScope() = default;
+  msWMSLayerOpacityScope(const msWMSLayerOpacityScope &) = delete;
+  msWMSLayerOpacityScope &operator=(const msWMSLayerOpacityScope &) = delete;
+
+  ~msWMSLayerOpacityScope() {
+    for (const auto &entry : saved) {
+      if (entry.compositer) {
+        entry.compositer->opacity = entry.opacity;
+      } else {
+        // msSetLayerOpacity() created a single, unfiltered compositor.
+        msFree(entry.layer->compositer);
+        entry.layer->compositer = nullptr;
+      }
+    }
+  }
+
+  int apply(mapObj *map, int version, char **names, char **values,
+            int numentries, const char *exception_format,
+            const owsRequestObj *ows_request) {
+    const char *parameter = nullptr;
+    const char *layers = nullptr;
+    auto invalid = [&](const std::string &message) {
+      msSetErrorWithStatus(MS_WMSERR, MS_HTTP_400_BAD_REQUEST, "%s",
+                           "msWMSLayerOpacityScope::apply()", message.c_str());
+      return msWMSException(map, version, "InvalidParameterValue",
+                            exception_format);
+    };
+    for (int i = 0; i < numentries; i++) {
+      if (strcasecmp(names[i], "LAYER_OPACITIES") == 0) {
+        if (parameter)
+          return invalid("LAYER_OPACITIES must occur only once.");
+        parameter = values[i];
+      } else if (strcasecmp(names[i], "LAYERS") == 0) {
+        layers = values[i];
+      }
+    }
+    if (!parameter)
+      return MS_SUCCESS;
+    if (!*parameter || !layers || !*layers)
+      return invalid("LAYER_OPACITIES requires a non-empty list of "
+                     "layer:opacity pairs and explicit LAYERS.");
+
+    // Do not silently accept formats which bypass layer compositing.
+    if (!MS_RENDERER_PLUGIN(map->outputformat) ||
+        msInitializeRendererVTable(map->outputformat) != MS_SUCCESS ||
+        !MS_MAP_RENDERER(map)->compositeRasterBuffer)
+      return invalid("LAYER_OPACITIES requires an output format supporting "
+                     "layer compositing.");
+
+    std::map<std::string, int> layerIndices;
+    std::set<std::string> groupNames;
+    if (map->name)
+      groupNames.insert(msStringToLower(std::string(map->name)));
+    for (int i = 0; i < map->numlayers; i++) {
+      layerObj *layer = GET_LAYER(map, i);
+      if (layer->name)
+        layerIndices[msStringToLower(std::string(layer->name))] = i;
+      if (layer->group)
+        groupNames.insert(msStringToLower(std::string(layer->group)));
+      const char *groups =
+          msOWSLookupMetadata(&layer->metadata, "MO", "layer_group");
+      if (groups && groups[0] == '/') {
+        for (const auto &group : msStringSplit(groups + 1, '/'))
+          groupNames.insert(msStringToLower(group));
+      }
+    }
+    const auto requestedNames = msStringSplit(layers, ',');
+
+    std::map<int, int> opacities;
+    std::set<std::string> seen;
+    const std::string text(parameter);
+    size_t start = 0;
+    while (start <= text.size()) {
+      const size_t end = text.find(',', start);
+      const std::string pair = text.substr(start, end - start);
+      // Split at the last colon to allow namespace-qualified layer names.
+      const size_t colon = pair.rfind(':');
+      if (colon == std::string::npos || colon == 0 || colon + 1 == pair.size())
+        return invalid(
+            "Invalid LAYER_OPACITIES entry. Expected layer:opacity.");
+      const std::string name = msStringToLower(pair.substr(0, colon));
+      const std::string value = pair.substr(colon + 1);
+      int opacity = 0;
+      // Bound the length before conversion, avoiding integer overflow.
+      if (value.size() > 3 ||
+          value.find_first_not_of("0123456789") != std::string::npos ||
+          msStringToInt(value.c_str(), &opacity, 10) != MS_SUCCESS ||
+          opacity > 100)
+        return invalid("Invalid LAYER_OPACITIES value '" + value +
+                       "' for layer '" + name +
+                       "'. Expected an integer from 0 to 100.");
+      if (!seen.insert(name).second)
+        return invalid("Duplicate layer '" + name + "' in LAYER_OPACITIES.");
+      const auto layerIndex = layerIndices.find(name);
+      if (layerIndex == layerIndices.end() || groupNames.count(name))
+        return invalid("Invalid LAYER_OPACITIES target '" + name +
+                       "'. Expected an individual WMS layer, "
+                       "not an unknown layer, group or the root layer.");
+      const int index = layerIndex->second;
+      // Reuse the selection computed by msWMSLoadGetMapParams(), including
+      // nested groups and explicitly requested STATUS DEFAULT layers.
+      if (!ows_request->layerwmsfilterindex ||
+          ows_request->layerwmsfilterindex[index] < 0 ||
+          !msIntegerInArray(index, ows_request->enabled_layers,
+                            ows_request->numlayers))
+        return invalid("LAYER_OPACITIES target '" + name +
+                       "' is not enabled and requested in LAYERS.");
+      opacities[index] = opacity;
+
+      // STYLES may have produced additional render copies of this layer.
+      if (ows_request->layerwmsfilterindex) {
+        for (int i = 0; i < map->numlayers; i++) {
+          const int argument = ows_request->layerwmsfilterindex[i];
+          if (argument >= 0 &&
+              argument < static_cast<int>(requestedNames.size()) &&
+              msStringToLower(requestedNames[argument]) == name &&
+              msIntegerInArray(i, ows_request->enabled_layers,
+                               ows_request->numlayers))
+            opacities[i] = opacity;
+        }
+      }
+      if (end == std::string::npos)
+        break;
+      start = end + 1;
+    }
+
+    for (const auto &entry : opacities) {
+      const layerObj *layer = GET_LAYER(map, entry.first);
+      if (layer->compositer && layer->compositer->next)
+        return invalid("LAYER_OPACITIES does not support layers with multiple "
+                       "COMPOSITE blocks.");
+    }
+    // Validate the entire parameter before changing any layer.
+    saved.reserve(opacities.size());
+    for (const auto &entry : opacities) {
+      layerObj *layer = GET_LAYER(map, entry.first);
+      saved.push_back({layer, layer->compositer,
+                       layer->compositer ? layer->compositer->opacity : 100});
+      msSetLayerOpacity(layer, entry.second);
+    }
+    return MS_SUCCESS;
+  }
+};
+
 /*
 ** msWMSGetMap()
 */
 static int msWMSGetMap(mapObj *map, int nVersion, char **names, char **values,
                        int numentries, const char *wms_exception_format,
                        owsRequestObj *ows_request) {
+
+  msWMSLayerOpacityScope opacityScope;
+  const int opacityStatus =
+      opacityScope.apply(map, nVersion, names, values, numentries,
+                         wms_exception_format, ows_request);
+  if (opacityStatus != MS_SUCCESS)
+    return opacityStatus;
 
   // If we are returning an OpenLayers map there is no need to first generate an
   // image. We can't call msReturnOpenLayersPage directly here as it requires

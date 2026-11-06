@@ -197,6 +197,8 @@ int main(int argc, char *argv[]) {
           msFreeConfig(config);
           exit(1);
         }
+        msApplyDefaultSubstitutions(map);
+        msApplyStyleItemsToLayers(map);
       }
     }
 

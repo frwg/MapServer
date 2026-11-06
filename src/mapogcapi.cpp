@@ -1240,7 +1240,7 @@ void msOGCAPIOutputTemplate(const char *directory, const char *filename,
 ** Generic response output.
 */
 static void outputResponse(
-    const mapObj *map, const cgiRequestObj *request, OGCAPIFormat format,
+    mapObj *map, cgiRequestObj *request, OGCAPIFormat format,
     const char *filename, const json &response,
     const std::map<std::string, std::vector<std::string>> &extraHeaders =
         std::map<std::string, std::vector<std::string>>()) {
@@ -1482,6 +1482,10 @@ static int processCollectionItemsRequest(mapObj *map, cgiRequestObj *request,
    * requests */
   layer->tolerance = 0;
 
+  /* No reason to handle tolerances feature queries, same as WFS GetFeature
+   * requests */
+  layer->tolerance = 0;
+
   if (!includeLayer(map, layer)) {
     msOGCAPIOutputError(OGCAPI_NOT_FOUND_ERROR, "Invalid collection.");
     return MS_SUCCESS;
@@ -1525,214 +1529,6 @@ static int processCollectionItemsRequest(mapObj *map, cgiRequestObj *request,
     }
   } else {
     extraHeaders["Content-Crs"].push_back('<' + std::string(CRS84_URL) + '>');
-  }
-
-  auto reservedParameters = getExtraParameters(map, layer);
-  reservedParameters.insert("f");
-  reservedParameters.insert("bbox");
-  reservedParameters.insert("bbox-crs");
-  reservedParameters.insert("datetime");
-  reservedParameters.insert("limit");
-  reservedParameters.insert("offset");
-  reservedParameters.insert("crs");
-  reservedParameters.insert("filter");
-  reservedParameters.insert("filter-lang");
-  reservedParameters.insert("filter-crs");
-  reservedParameters.insert("sortby");
-
-  bool error = false;
-  std::vector<std::string> queryableItems =
-      msOOGCAPIGetLayerQueryables(layer, reservedParameters, error);
-  if (error) {
-    return MS_SUCCESS;
-  }
-
-  for (std::string &item : queryableItems) {
-    item = getItemAliasOrName(layer, item);
-  }
-
-  auto allowedParameters = reservedParameters;
-  for (const auto &item : queryableItems)
-    allowedParameters.insert(item);
-
-  if (!msOOGCAPICheckQueryParameters(map, request, allowedParameters)) {
-    return MS_SUCCESS;
-  }
-
-  // Simple filtering like "field_name=value"
-  std::string filter;
-  std::string query_kvp;
-  if (!queryableItems.empty()) {
-    for (int i = 0; i < request->NumParams; i++) {
-      if (request->ParamSources[i] ==
-          MS_PARAM_SOURCE_COOKIE) // ignore cookie parameters
-        continue;
-      if (std::find(queryableItems.begin(), queryableItems.end(),
-                    request->ParamNames[i]) != queryableItems.end()) {
-
-        // Find actual item name from alias
-        const char *pszItem = nullptr;
-        for (int j = 0; j < layer->numitems; ++j) {
-          if (request->ParamNames[i] ==
-              getItemAliasOrName(layer, layer->items[j])) {
-            pszItem = layer->items[j];
-            break;
-          }
-        }
-        assert(pszItem);
-
-        const std::string expr = FLTGetBinaryComparisonCommonExpression(
-            layer, pszItem, false, "=", request->ParamValues[i]);
-        if (!filter.empty())
-          filter += " AND ";
-        filter += expr;
-
-        query_kvp += '&';
-        char *encoded = msEncodeUrl(request->ParamNames[i]);
-        query_kvp += encoded;
-        msFree(encoded);
-        query_kvp += '=';
-        encoded = msEncodeUrl(request->ParamValues[i]);
-        query_kvp += encoded;
-        msFree(encoded);
-      }
-    }
-  }
-
-  const char *filterParam = getRequestParameter(request, "filter");
-  const char *filterLang = getRequestParameter(request, "filter-lang");
-  if (filterParam) {
-    if (filterLang && strcmp(filterLang, "cql2-text") != 0 &&
-        strcmp(filterLang, "cql2-json") != 0) {
-      msOGCAPIOutputError(
-          OGCAPI_PARAM_ERROR,
-          "Only filter-lang=cql2-text or filter-lang=cql2-json is handled");
-      return MS_SUCCESS;
-    }
-
-    std::string osErrorMsg;
-    auto cql2 = (filterLang && strcmp(filterLang, "cql2-json") == 0)
-                    ? CQL2JSONParse(filterParam, osErrorMsg)
-                    : CQL2TextParse(filterParam, osErrorMsg);
-    if (!cql2) {
-      msOGCAPIOutputError(OGCAPI_PARAM_ERROR,
-                          "Cannot parse filter: " + osErrorMsg);
-      return MS_SUCCESS;
-    }
-
-    std::string filterCrs = "EPSG:4326";
-    bool axisInverted =
-        false; // because above EPSG:4326 is meant to be OGC:CRS84 actually
-    const char *filterCrsParam = getRequestParameter(request, "filter-crs");
-    if (filterCrsParam) {
-      bool isExpectedCrs = false;
-      for (const auto &crsItem : getCrsList(map, layer)) {
-        if (filterCrsParam == crsItem.get<std::string>()) {
-          isExpectedCrs = true;
-          break;
-        }
-      }
-      if (!isExpectedCrs) {
-        msOGCAPIOutputError(OGCAPI_PARAM_ERROR, "Bad value for filter-crs.");
-        return MS_SUCCESS;
-      }
-      if (std::string(filterCrsParam) != CRS84_URL) {
-        if (std::string(filterCrsParam).find(EPSG_PREFIX_URL) == 0) {
-          const char *code = filterCrsParam + strlen(EPSG_PREFIX_URL);
-          filterCrs = std::string("EPSG:") + code;
-          axisInverted = msIsAxisInverted(atoi(code));
-        }
-      }
-    }
-
-    const char *geometryName = getGeometryName(layer);
-    const std::string filterFromCQL =
-        cql2->ToMapServerFilter(layer, queryableItems, geometryName, filterCrs,
-                                axisInverted, osErrorMsg);
-    if (!osErrorMsg.empty()) {
-      msOGCAPIOutputError(
-          OGCAPI_PARAM_ERROR,
-          "Cannot translate CQL2 filter to MapServer expression: " +
-              osErrorMsg);
-      return MS_SUCCESS;
-    }
-    if (filter.empty())
-      filter = filterFromCQL;
-    else {
-      filter = "(" + filter + ") AND (" + filterFromCQL + ")";
-    }
-
-    query_kvp += "&filter=";
-    char *encoded = msEncodeUrl(filterParam);
-    query_kvp += encoded;
-    msFree(encoded);
-    if (filterLang) {
-      query_kvp += "&filter-lang=";
-      query_kvp += filterLang;
-    }
-    if (filterCrsParam) {
-      query_kvp += "&filter-crs=";
-      encoded = msEncodeUrl(filterCrsParam);
-      query_kvp += encoded;
-      msFree(encoded);
-    }
-  }
-
-  if (!filter.empty()) {
-    msDebug("filter = %s\n", filter.c_str());
-  }
-
-  const char *sortby = getRequestParameter(request, "sortby");
-  if (sortby) {
-    query_kvp += "&sortby=";
-    {
-      char *encoded = msEncodeUrl(sortby);
-      query_kvp += encoded;
-      msFree(encoded);
-    }
-
-    const auto sortables =
-        msOOGCAPIGetLayerSortables(layer, reservedParameters, error);
-    if (error) {
-      return MS_SUCCESS;
-    }
-
-    std::vector<sortByProperties> props;
-    struct msFreeReleaser {
-      void operator()(char *s) { msFree(s); }
-    };
-    std::vector<std::unique_ptr<char, msFreeReleaser>> items;
-    for (const auto &item : msStringSplit(sortby, ',')) {
-      if (item.empty())
-        continue;
-      sortByProperties prop;
-      if (item[0] == '-') {
-        prop.sortOrder = SORT_DESC;
-        items.emplace_back(msStrdup(item.c_str() + 1));
-      } else if (item[0] == '+') {
-        prop.sortOrder = SORT_ASC;
-        items.emplace_back(msStrdup(item.c_str() + 1));
-      } else {
-        prop.sortOrder = SORT_ASC;
-        items.emplace_back(msStrdup(item.c_str()));
-      }
-      prop.item = items.back().get();
-      if (std::find_if(sortables.begin(), sortables.end(),
-                       [&prop](const std::string &s) {
-                         return strcasecmp(prop.item, s.c_str()) == 0;
-                       }) == sortables.end()) {
-        msOGCAPIOutputError(OGCAPI_PARAM_ERROR, (std::string("'") + prop.item +
-                                                 "' is not a sortable item")
-                                                    .c_str());
-        return MS_SUCCESS;
-      }
-      props.push_back(prop);
-    }
-
-    sortByClause sortByClause;
-    sortByClause.nProperties = static_cast<int>(props.size());
-    sortByClause.properties = props.data();
-    msLayerSetSort(layer, &sortByClause);
   }
 
   struct ReprojectionObjects {
@@ -1886,8 +1682,6 @@ static int processCollectionItemsRequest(mapObj *map, cgiRequestObj *request,
     if (numberMatched > 0) {
       map->query.only_cache_result_count = MS_FALSE;
       map->query.maxfeatures = limit;
-
-      msOWSSetShapeCache(map, "AO");
 
       if (offsetStr) {
         if (offset >= numberMatched) {

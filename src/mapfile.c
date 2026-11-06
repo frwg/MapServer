@@ -6956,7 +6956,7 @@ static bool msGetCWD(char *szBuffer, size_t nBufferSize,
 /*
  * Apply any SLD styles referenced in a LAYER's STYLEITEM
  */
-static void applyStyleItemsToLayers(mapObj *map) {
+void msApplyStyleItemsToLayers(mapObj *map) {
 
   // applying SLD can create cloned layers so store the original layer count
   int layerCount = map->numlayers;
@@ -6970,7 +6970,7 @@ static void applyStyleItemsToLayers(mapObj *map) {
       if (*filename == '\0') {
         msSetErrorWithStatus(MS_IOERR, MS_HTTP_500_INTERNAL_SERVER_ERROR,
                              "Empty SLD filename: \"%s\".",
-                             "applyStyleItemsToLayers()", layer->styleitem);
+                             "msApplyStyleItemsToLayers()", layer->styleitem);
       } else {
         msSLDApplyFromFile(map, layer, filename);
       }
@@ -7047,7 +7047,7 @@ mapObj *msLoadMapFromString(const char *buffer, const char *new_mappath,
 
   msReleaseLock(TLOCK_PARSER);
 
-  msFinalizeMap(map);
+  msApplyStyleItemsToLayers(map);
 
   if (debuglevel >= MS_DEBUGLEVEL_TUNING) {
     /* In debug mode, report time spent loading/parsing mapfile. */

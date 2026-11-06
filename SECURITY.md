@@ -25,8 +25,7 @@ where "x" is the most recent release in the series, such as: 7.6.6 being support
 not 7.6.5).  For example, once 8.8 is released, support for 8.6 will be dropped.
  
 Patches will only be provided **for a period of three years** from the release date of the current series.
-For example, as 8.6 has been released, now 8.6.x will be supported/patched (7.6.x support ended on 2025-09-12, 
-which was three years from the date of the 8.0 series release).
+For example, as 8.6 has been released, now 8.6.x will be supported/patched (7.6.x support ended on 2025-09-12, which was three years from the date of the 8.0 series release).
 
 Currently, the following versions are supported:
 

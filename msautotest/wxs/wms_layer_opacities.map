@@ -1,0 +1,86 @@
+MAP
+  NAME "opacity_root"
+  SIZE 64 64
+  EXTENT 0 0 64 64
+  IMAGECOLOR 255 255 255
+  PROJECTION
+    "EPSG:3857"
+  END
+  WEB
+    METADATA
+      "wms_title" "Layer opacity tests"
+      "wms_srs" "EPSG:3857"
+      "wms_enable_request" "*"
+    END
+  END
+  OUTPUTFORMAT
+    NAME "png"
+    DRIVER "AGG/PNG"
+    MIMETYPE "image/png"
+    IMAGEMODE RGB
+  END
+  LAYER
+    NAME "red"
+    GROUP "colors"
+    TYPE POLYGON
+    STATUS OFF
+    COMPOSITE
+      OPACITY 80
+    END
+    FEATURE
+      POINTS
+        0 0
+        48 0
+        48 64
+        0 64
+        0 0
+      END
+    END
+    CLASS
+      STYLE
+        COLOR 255 0 0
+        OUTLINECOLOR 0 0 0
+        WIDTH 2
+      END
+    END
+  END
+  LAYER
+    NAME "blue"
+    GROUP "colors"
+    TYPE POLYGON
+    STATUS OFF
+    FEATURE
+      POINTS
+        32 0
+        64 0
+        64 64
+        32 64
+        32 0
+      END
+    END
+    CLASS
+      STYLE
+        COLOR 0 0 255
+      END
+    END
+  END
+  LAYER
+    NAME "unused"
+    TYPE POLYGON
+    STATUS OFF
+    FEATURE
+      POINTS
+        0 0
+        64 0
+        64 64
+        0 64
+        0 0
+      END
+    END
+    CLASS
+      STYLE
+        COLOR 0 255 0
+      END
+    END
+  END
+END
