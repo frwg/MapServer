@@ -13,6 +13,18 @@ https://mapserver.org/development/changelog/
 
 The online Migration Guide can be found at https://mapserver.org/MIGRATION_GUIDE.html
 
+8.6.6-frwgopacity release (2026-11-06)
+---------------------------------------
+
+- Add the vendor-specific WMS GetMap `LAYER_OPACITIES` parameter to apply
+  request-local opacity overrides to selected layers.
+
+- Propagate layer-rendering errors when compositing rendered layers.
+
+This fork release is based on MapServer 8.6.6 and contains the layer-opacity
+extension and its related fixes and tests. It does not include later mainline
+features.
+
 8.6.6 release (2026-09-06)
 --------------------------
 
