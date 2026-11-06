@@ -1482,10 +1482,6 @@ static int processCollectionItemsRequest(mapObj *map, cgiRequestObj *request,
    * requests */
   layer->tolerance = 0;
 
-  /* No reason to handle tolerances feature queries, same as WFS GetFeature
-   * requests */
-  layer->tolerance = 0;
-
   if (!includeLayer(map, layer)) {
     msOGCAPIOutputError(OGCAPI_NOT_FOUND_ERROR, "Invalid collection.");
     return MS_SUCCESS;

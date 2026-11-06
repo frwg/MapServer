@@ -3232,76 +3232,14 @@ msWMSPrintLayerNode(mapObj *map, int nVersion, owsRequestObj *ows_request,
       msFree(encoded);
     }
 
-    /* Beginning of a new group... enclose the group in a layer block */
-    if (j < map->numlayers) {
-      if (!pabLayerProcessed[j]) {
-        msDumpLayer(map, GET_LAYER(map, j), nVersion, script_url_encoded,
-                    indent.c_str(), validated_language, MS_TRUE,
-                    msWMSHasQueryableSubLayers(map, index, level, nestedGroups,
-                                               numNestedGroups));
-        pabLayerProcessed[j] = 1; /* done */
-        groupAdded = true;
-      }
-    } else {
-      msIO_printf("%s    <Layer%s>\n", indent.c_str(),
-                  msWMSHasQueryableSubLayers(map, index, level, nestedGroups,
-                                             numNestedGroups)
-                      ? " queryable=\"1\""
-                      : "");
-      msIO_printf("%s      <Name>%s</Name>\n", indent.c_str(),
-                  nestedGroups[index][level]);
-
-      {
-        const char *value;
-        if ((value = msOWSLookupMetadataWithLanguage(
-                 &(GET_LAYER(map, index)->metadata), "MO", "GROUP_TITLE",
-                 validated_language))) {
-          char *encoded = msEncodeHTMLEntities(value);
-          msIO_printf("%s      <Title>%s</Title>\n", indent.c_str(), encoded);
-          msFree(encoded);
-        } else {
-          msIO_printf("%s      <Title>%s</Title>\n", indent.c_str(),
-                      nestedGroups[index][level]);
-        }
-      }
-      {
-        const char *value;
-        if ((value = msOWSLookupMetadataWithLanguage(
-                 &(GET_LAYER(map, index)->metadata), "MO", "GROUP_ABSTRACT",
-                 validated_language))) {
-          char *encoded = msEncodeHTMLEntities(value);
-          msIO_printf("%s      <Abstract>%s</Abstract>\n", indent.c_str(),
-                      encoded);
-          msFree(encoded);
-        }
-      }
-
-      groupAdded = true;
-    }
-
-    /* Look for one group deeper in the current layer */
-    if (!pabLayerProcessed[index]) {
-      msWMSPrintNestedGroups(map, nVersion, pabLayerProcessed, index, level + 1,
-                             nestedGroups, numNestedGroups, isUsedInNestedGroup,
-                             script_url_encoded, validated_language);
-    }
-
-    /* look for subgroups in other layers. */
-    for (j = index + 1; j < map->numlayers; j++) {
-      if (msWMSIsSubGroup(nestedGroups[index], level, nestedGroups[j],
-                          numNestedGroups[j])) {
-        if (!pabLayerProcessed[j]) {
-          msWMSPrintNestedGroups(map, nVersion, pabLayerProcessed, j, level + 1,
-                                 nestedGroups, numNestedGroups,
-                                 isUsedInNestedGroup, script_url_encoded,
-                                 validated_language);
-        }
-      } else {
-        /* TODO: if we would sort all layers on "WMS_LAYER_GROUP" beforehand */
-        /* we could break out of this loop at this point, which would increase
-         */
-        /* performance.  */
-      }
+    if (script_url_encoded && indentLevel == 2 && !node->children.empty() &&
+        node->children[0]->layerIdx >= 0) {
+      layerObj *lp = GET_LAYER(map, node->children[0]->layerIdx);
+      if (lp->group && strlen(lp->group) > 0 &&
+          msIntegerInArray(lp->index, ows_request->enabled_layers,
+                           ows_request->numlayers)) {
+        msWMSPrintGroupStyle(map, nVersion, ows_request, node, lp,
+                             script_url_encoded, indent);
     }
   }
 
