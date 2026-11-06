@@ -13,6 +13,22 @@ https://mapserver.org/development/changelog/
 
 The online Migration Guide can be found at https://mapserver.org/MIGRATION_GUIDE.html
 
+8.6.6-frwg release (2026-11-06)
+-------------------------------
+
+- Add the vendor-specific WMS GetMap `LAYER_OPACITIES` parameter for applying
+  request-local opacity overrides to selected layers.
+
+- Include upstream mainline changes since 8.6.6, including OGC API Features
+  filtering and queryables, SLD and WMS improvements, new kriging and geodesic
+  scale-bar capabilities, and raster processing updates.
+
+- Include upstream security and stability fixes for bounds checking, input
+  validation, memory safety and resource handling.
+
+This fork release is based on MapServer 8.6.6. See the detailed changelog for
+the complete list of upstream changes.
+
 8.6.6 release (2026-09-06)
 --------------------------
 
